@@ -35,12 +35,15 @@
 #ifndef ABSL_META_TYPE_TRAITS_H_
 #define ABSL_META_TYPE_TRAITS_H_
 
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/base/attributes.h"
@@ -564,21 +567,49 @@ struct IsOwnerImpl<
 template <typename T>
 struct IsOwner : IsOwnerImpl<T> {};
 
+template <typename T>
+struct IsOwner<T&> : std::false_type {};
+
+template <typename T>
+struct IsOwner<T&&> : std::false_type {};
+
+template <typename T>
+struct IsOwner<const T> : IsOwner<T> {};
+
+template <typename T>
+struct IsOwner<volatile T> : IsOwner<T> {};
+
+template <typename T>
+struct IsOwner<const volatile T> : IsOwner<T> {};
+
+template <typename T>
+struct IsOwner<std::reference_wrapper<T>> : std::false_type {};
+
+template <typename T, std::size_t N>
+struct IsOwner<std::array<T, N>>
+    : std::conditional_t<N != 0, IsOwner<T>, std::false_type> {};
+
 // This allows incomplete types to be used for associative containers, and also
 // expands the set of types we can handle to include std::pair.
 template <typename T1, typename T2>
-struct IsOwner<std::pair<T1, T2>>
-    : std::bool_constant<
-          std::conditional_t<std::is_reference_v<T1>, std::false_type,
-                             IsOwner<std::remove_cv_t<T1>>>::value &&
-          std::conditional_t<std::is_reference_v<T2>, std::false_type,
-                             IsOwner<std::remove_cv_t<T2>>>::value> {};
+struct IsOwner<std::pair<T1, T2>> : IsOwner<std::tuple<T1, T2>> {};
 
 template <typename T, typename Traits, typename Alloc>
 struct IsOwner<std::basic_string<T, Traits, Alloc>> : std::true_type {};
 
 template <typename T, typename Alloc>
 struct IsOwner<std::vector<T, Alloc>> : std::true_type {};
+
+template <typename... T>
+struct IsOwner<std::tuple<T...>>
+    : std::bool_constant<(sizeof...(T) > 0) &&
+                         // Uses a C++17 fold expression where '...' unpacks the
+                         // parameter pack T, and 'true &&' provides the base
+                         // case for the logical AND operation across all types.
+                         (true && ... && IsOwner<T>::value)> {};
+
+template <typename... T>
+struct IsOwner<std::variant<T...>> : IsOwner<std::tuple<T...>> {};
 
 // Detects if a class's definition has declared itself to be a view by declaring
 //   using absl_internal_is_view = std::true_type;
@@ -607,15 +638,46 @@ template <typename T>
 struct IsView
     : std::bool_constant<std::is_pointer_v<T> || IsViewImpl<T>::value> {};
 
+template <typename T>
+struct IsView<T&> : std::true_type {};
+
+template <typename T>
+struct IsView<T&&> : std::true_type {};
+
+template <typename T>
+struct IsView<const T> : IsView<T> {};
+
+template <typename T>
+struct IsView<volatile T> : IsView<T> {};
+
+template <typename T>
+struct IsView<const volatile T> : IsView<T> {};
+
+template <typename T>
+struct IsView<std::reference_wrapper<T>> : std::true_type {};
+
+template <typename T, std::size_t N>
+struct IsView<std::array<T, N>>
+    : std::conditional_t<N != 0, IsView<T>, std::false_type> {};
+
 // This allows incomplete types to be used for associative containers, and also
 // expands the set of types we can handle to include std::pair.
 template <typename T1, typename T2>
-struct IsView<std::pair<T1, T2>>
-    : std::bool_constant<IsView<std::remove_cv_t<T1>>::value &&
-                         IsView<std::remove_cv_t<T2>>::value> {};
+struct IsView<std::pair<T1, T2>> : IsView<std::tuple<T1, T2>> {};
 
 template <typename Char, typename Traits>
 struct IsView<std::basic_string_view<Char, Traits>> : std::true_type {};
+
+template <typename... T>
+struct IsView<std::tuple<T...>>
+    : std::bool_constant<(sizeof...(T) > 0) &&
+                         // Uses a C++17 fold expression where '...' unpacks the
+                         // parameter pack T, and 'true &&' provides the base
+                         // case for the logical AND operation across all types.
+                         (true && ... && IsView<T>::value)> {};
+
+template <typename... T>
+struct IsView<std::variant<T...>> : IsView<std::tuple<T...>> {};
 
 #ifdef __cpp_lib_span
 template <typename T>
